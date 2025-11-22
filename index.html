@@ -1,118 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Crypto Dashboard - Full AI Model (with Coin Manager)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
- body { font-family: Arial; background:#0b0b0b; color:white; margin:0; }
- header { padding:20px; font-size:22px; text-align:left; background:#111; display:flex; align-items:center; gap:12px; }
- .app { display:flex; height:calc(100vh - 60px); }
- .sidebar { width:220px; background:#0f1720; padding:10px; box-sizing:border-box; }
- .sidebar ul { list-style:none; padding:0; margin:0; }
- .sidebar li { padding:12px; cursor:pointer; border-radius:6px; margin-bottom:8px; }
- .sidebar li:hover { background:#111827; }
- .sidebar .active { background:#1f2937; }
- .content { flex:1; padding:20px; overflow:auto; }
- .page { display:none; }
- .page.active { display:block; }
- .panel { background:#111827; padding:15px; border-radius:10px; margin-bottom:12px; }
- input, button, select { padding:8px; border-radius:6px; border:0; }
- table { width:100%; border-collapse:collapse; margin-top:10px; }
- th, td { padding:8px; text-align:left; border-bottom:1px solid #222; }
- .small { font-size:13px; color:#9ca3af; }
- .btn-danger { background:#b91c1c; color:white; padding:6px 10px; border-radius:6px; border:0; cursor:pointer;}
- .btn { background:#2563eb; color:white; padding:8px 12px; border-radius:6px; border:0; cursor:pointer;}
-</style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Crypto Dashboard — Pro (Fixed Panels + AI)</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header>
-  <div style="font-weight:700;">Crypto Dashboard</div>
-  <div style="margin-left:auto;" class="small">AI Model • Live Feeds</div>
+  <div class="container">
+    <h1>Crypto Dashboard — Pro (Fixed Panels + AI)</h1>
+    <p class="subtitle">Fixed embed issues + full AI predictive model (server template included). Set <code>API_BASE</code> in <code>script.js</code> to enable server predictions.</p>
+  </div>
 </header>
 
-<div class="app">
-  <nav class="sidebar">
+<main class="container">
+  <section class="grid">
+    <div class="card">
+      <h2>BTC Live Chart</h2>
+      <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tv_btc&symbol=BINANCE:BTCUSDT&interval=60&theme=dark"></iframe>
+    </div>
+    <div class="card">
+      <h2>XRP Live Chart</h2>
+      <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tv_xrp&symbol=BINANCE:XRPUSDT&interval=60&theme=dark"></iframe>
+    </div>
+    <div class="card">
+      <h2>GALA Live Chart</h2>
+      <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tv_gala&symbol=BINANCE:GALAUSDT&interval=60&theme=dark"></iframe>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Predictive Signals (Per Coin)</h2>
+      <div class="signals">
+        <div class="signal-row"><strong>BTC:</strong> <span id="btcSignal" class="signal neutral">—</span> <small id="btcExplain"></small></div>
+        <div class="signal-row"><strong>XRP:</strong> <span id="xrpSignal" class="signal neutral">—</span> <small id="xrpExplain"></small></div>
+        <div class="signal-row"><strong>GALA:</strong> <span id="galaSignal" class="signal neutral">—</span> <small id="galaExplain"></small></div>
+      </div>
+      <p class="small">Signals combine lightweight client-side model + optional server-side AI (recommended).</p>
+    </div>
+
+    <div class="card">
+      <h2>Volatility Forecast (BTC)</h2>
+      <canvas id="volChart"></canvas>
+      <p class="small">Client-side EWMA volatility forecast (demo).</p>
+    </div>
+
+    <div class="card">
+      <h2>Market Heatmap & Sentiment</h2>
+      <!-- Coin360 embed that should work on Pages -->
+      <iframe src="https://coin360.com/widget/map?theme=dark"></iframe>
+      <div style="margin-top:8px;">
+        <iframe src="https://alternative.me/crypto/fear-and-greed-index/widget/" style="height:120px;"></iframe>
+      </div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Stablecoin Composition (Demo)</h2>
+      <canvas id="stablecoinChart" height="140"></canvas>
+      <p class="small">Demo composition of USDT / USDC (client-side). For exchange reserve data use server proxy to CryptoQuant or similar.</p>
+    </div>
+
+    <div class="card">
+      <h2>Long/Short & Funding Snapshot</h2>
+      <!-- TradingView funding widget (works reliably) -->
+      <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=funding&symbol=BINANCE:BTCUSDT&interval=60&theme=dark" style="height:220px;"></iframe>
+    </div>
+
+    <div class="card">
+      <h2>Decision Panel</h2>
+      <div class="decision" id="decisionBox">
+        <div id="traffic" class="traffic neutral">NEUTRAL</div>
+        <div id="decisionExplain" class="small">Loading...</div>
+        <div style="margin-top:8px;">
+          <button id="runModels">Run Models</button>
+          <button id="download">Download Page</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="notes card">
+    <h3>Notes & Next Steps</h3>
     <ul>
-      <li id="menu-markets" class="active">Markets</li>
-      <li id="menu-wallet">Wallet</li>
-      <li id="menu-coin-manager">Coin Manager</li>
-      <li id="menu-settings">Settings</li>
+      <li>This project is static front-end ready for GitHub Pages.</li>
+      <li>To enable server-side predictions, deploy the provided <code>server_example</code> FastAPI service and set <code>API_BASE</code> in <code>script.js</code>.</li>
+      <li>Server includes a simple RandomForest model template; replace with LSTM/Transformer for production.</li>
     </ul>
-  </nav>
+  </section>
 
-  <main class="content">
-    <section id="markets" class="page active">
-      <h2>Markets</h2>
-      <div id="market-cards" class="grid">
-        <!-- existing market content preserved below -->
-        <div class="panel">
-         <h3>Volatility</h3>
-         <canvas id="volatility"></canvas>
-        </div>
-        <div class="panel">
-         <h3>AI Predictive Buy/Sell Score</h3>
-         <div id="ai-score" style="font-size:24px;text-align:center;margin-top:40px;">Loading...</div>
-        </div>
-      </div>
-    </section>
+</main>
 
-    <section id="wallet" class="page">
-      <h2>Wallet</h2>
-      <div class="panel">Wallet content...</div>
-    </section>
+<footer>
+  <div class="container">Built for demonstration. Not financial advice. See README for deployment steps.</div>
+</footer>
 
-    <section id="coin-manager" class="page">
-      <h2>Coin Manager</h2>
-      <div class="panel">
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <input id="cm-name" placeholder="Coin name (e.g., Bitcoin)" />
-          <input id="cm-symbol" placeholder="Symbol (e.g., BTC)" />
-          <input id="cm-api" placeholder="API (optional)" style="flex:1;" />
-          <button id="cm-add" class="btn">Add Coin</button>
-        </div>
-        <div id="cm-status" class="small" style="margin-top:8px;">Changes saved to browser localStorage.</div>
-
-        <table id="cm-table" aria-label="Coin list">
-          <thead><tr><th>Coin</th><th>Symbol</th><th>API</th><th>Actions</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="settings" class="page">
-      <h2>Settings</h2>
-      <div class="panel">Settings content...</div>
-    </section>
-  </main>
-</div>
-
-<script src="assets/coin-manager.js"></script>
-<!-- keep existing scripts (if any) -->
-<script src="assets/ai_model.js"></script>
-<script src="assets/dominance.js"></script>
-<script src="assets/volatility.js"></script>
-
-<script>
-// navigation logic
-function showPage(id){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  document.querySelectorAll('.sidebar li').forEach(li=>li.classList.remove('active'));
-  document.getElementById('menu-'+id).classList.add('active');
-}
-document.getElementById('menu-markets').onclick = ()=> showPage('markets');
-document.getElementById('menu-wallet').onclick = ()=> showPage('wallet');
-document.getElementById('menu-coin-manager').onclick = ()=> showPage('coin-manager');
-document.getElementById('menu-settings').onclick = ()=> showPage('settings');
-
-// when coins update, you can listen for the custom event 'coinsUpdated'
-document.addEventListener('coinsUpdated', (e)=>{
-  console.log('Coins updated:', e.detail);
-  // update AI score or other modules here if desired
-  const ai = document.getElementById('ai-score');
-  ai.textContent = 'Coins: ' + e.detail.join(', ');
-});
-</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
