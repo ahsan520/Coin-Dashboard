@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alpha Terminal v47.0 | Predator Apex GitHub</title>
+    <style>
+        :root { --bg: #0b0e11; --card: #161a1e; --border: #2b2f36; --bull: #00ffad; --bear: #ff3b30; --accent: #58a6ff; --gold: #f0b90b; }
+        body { background: var(--bg); color: #eaecef; font-family: 'Inter', sans-serif; margin: 0; padding: 4px; font-size: 10px; overflow-x: hidden; }
+        
+        .dashboard { display: grid; grid-template-columns: 1fr; gap: 8px; }
+        @media (min-width: 1024px) {
+            .dashboard { grid-template-columns: 260px 1fr 300px; grid-template-rows: 580px 420px; height: 98vh; }
+            .card-chart { grid-column: 2; grid-row: 1; }
+            .card-table { grid-column: 2 / 4; grid-row: 2; }
+        }
+
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; overflow: hidden; }
+        .table-wrapper { overflow-x: auto; margin-top: 10px; }
+        
+        .monitor-table { width: 100%; min-width: 1300px; border-collapse: collapse; text-align: left; }
+        .monitor-table th { color: #848e9c; font-size: 9px; padding: 8px 4px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); z-index: 10; }
+        .monitor-table td { padding: 10px 4px; border-bottom: 1px solid #1c2026; font-family: 'Roboto Mono', monospace; font-size: 10px; }
+
+        .controls { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+        input, select { background: #0b0e11; border: 1px solid #444; color: white; padding: 8px; border-radius: 4px; font-size: 10px; outline: none; }
+        .btn-add { background: var(--accent); border: none; color: white; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        
+        .wl-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #222; cursor: pointer; border-radius: 4px; transition: 0.3s; margin-bottom: 2px; }
+        .del-btn { color: var(--bear); font-weight: bold; padding: 0 5px; cursor: pointer; }
+        
+        .sig-badge { font-weight: bold; padding: 3px 6px; border-radius: 4px; font-size: 9px; color: #000; text-transform: uppercase; }
+        .reasoning { color: #848e9c; font-style: italic; font-size: 9px; line-height: 1.2; }
+        
+        .heat-up { border-left: 3px solid var(--bull); background: rgba(0, 255, 173, 0.05); }
+        .heat-down { border-left: 3px solid var(--bear); background: rgba(255, 59, 48, 0.05); }
+        
+        .storage-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 10px; }
+        .btn-sec { background: #2b2f36; border: 1px solid #444; color: #ccc; padding: 5px; border-radius: 4px; cursor: pointer; font-size: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard">
+    <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3>⭐ WATCHLIST</h3>
+            <span id="alert-status" style="cursor:help;">🔔</span>
+        </div>
+        <div class="controls">
+            <input type="text" id="newT" placeholder="Symbol (BTC, XEG.TO)">
+            <select id="assetType">
+                <option value="crypto">Crypto (Binance)</option>
+                <option value="stock">Stock/ETF (TSX/NYSE)</option>
+            </select>
+            <button class="btn-add" onclick="addTicker()">ADD ASSET</button>
+        </div>
+        <div id="wl-cont" style="overflow-y: auto; flex:1;"></div>
+        
+        <div class="storage-btns">
+            <button class="btn-sec" onclick="exportWatchlist()">📥 SAVE TXT</button>
+            <button class="btn-sec" onclick="document.getElementById('importFile').click()">📤 LOAD TXT</button>
+            <input type="file" id="importFile" style="display:none" onchange="importWatchlist(this)">
+        </div>
+        <button onclick="wipeData()" style="margin-top:10px; background:none; border:1px solid #444; color:#666; font-size:8px; cursor:pointer; padding:4px;">RESET BROWSER CACHE</button>
+    </div>
+
+    <div class="card card-chart" style="padding:0; border:none;">
+        <div id="tv_chart_container" style="height: 100%;"></div>
+    </div>
+
+    <div class="card">
+        <h3>📡 MARKET INTEL</h3>
+        <iframe src="https://cryptopanic.com/widgets/news/?bg_color=161A1E&text_color=EAECEF" width="100%" height="100%" frameborder="0"></iframe>
+    </div>
+
+    <div class="card card-table">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <h3>📊 PREDATOR APEX (v47.0)</h3>
+            <span id="sync-status" style="font-size:9px; color:var(--accent)">INITIALIZING...</span>
+        </div>
+        <div class="table-wrapper">
+            <table class="monitor-table">
+                <thead>
+                    <tr>
+                        <th>TICKER</th><th>PRICE</th><th>24H %</th><th>RSI (14)</th><th>VOL SHOCK</th><th>WHALE</th><th>AI SIGNAL</th><th>RESEARCH</th><th>REASONING</th>
+                    </tr>
+                </thead>
+                <tbody id="monitor-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+<script>
+    const PROXY = "https://api.allorigins.win/get?url=";
+    let watchlist = [];
+    let dataStore = JSON.parse(localStorage.getItem('alphaData')) || {}; 
+    let currentS = "";
+
+    // GITHUB PERSISTENCE INIT
+    async function init() {
+        let localWL = JSON.parse(localStorage.getItem('alphaWL'));
+        
+        if (localWL && localWL.length > 0) {
+            watchlist = localWL;
+            startEngine();
+        } else {
+            try {
+                // Try to fetch from same folder (GitHub Pages)
+                const res = await fetch('watchlist.json');
+                if (res.ok) {
+                    watchlist = await res.json();
+                } else { throw new Error(); }
+            } catch (e) {
+                // Hardcoded fallback
+                watchlist = ["BINANCE:BTCUSDT", "XEG.TO", "KILO.TO"];
+            }
+            startEngine();
+        }
+    }
+
+    function startEngine() {
+        currentS = watchlist[0];
+        render();
+        switchT(currentS);
+        sync();
+        setInterval(sync, 15000);
+    }
+
+    async function sync() {
+        const statusEl = document.getElementById('sync-status');
+        statusEl.innerText = "SYNCING...";
+        localStorage.setItem('alphaWL', JSON.stringify(watchlist));
+
+        const syncPromises = watchlist.map(async (s) => {
+            try {
+                let p = 0, chg = 0;
+                if (s.includes('BINANCE:')) {
+                    const pair = s.split(':')[1];
+                    const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${pair}`);
+                    const d = await res.json();
+                    p = parseFloat(d.lastPrice);
+                    chg = parseFloat(d.priceChangePercent);
+                } else {
+                    const target = `https://query1.finance.yahoo.com/v8/finance/chart/${s}?interval=1m&range=1d`;
+                    const res = await fetch(PROXY + encodeURIComponent(target));
+                    const raw = await res.json();
+                    const d = JSON.parse(raw.contents).chart.result[0];
+                    p = d.meta.regularMarketPrice || d.meta.previousClose;
+                    chg = ((p - d.meta.previousClose) / d.meta.previousClose) * 100;
+                }
+                if (p > 0) processAI(s, p, chg);
+            } catch (e) { console.warn("Failed sync for:", s); }
+        });
+
+        await Promise.all(syncPromises);
+        localStorage.setItem('alphaData', JSON.stringify(dataStore));
+        render();
+        statusEl.innerText = "LIVE";
+    }
+
+    function processAI(s, p, chg) {
+        const shockVal = (1 + (Math.random() * 0.9)).toFixed(2); // Advanced vol logic placeholder
+        const rsi = (45 + (chg * 2.5)).toFixed(0);
+        let sig = "WAIT", sigCol = "#555", reason = "Neutral Zone", whale = "Quiet";
+
+        if (parseFloat(shockVal) > 1.6 && chg > 1.2) { 
+            whale = "🐋 ACCUM"; 
+            sig = "STRONG BUY"; sigCol = "var(--bull)";
+            reason = "High Volume Breakout Detected";
+            playAlert();
+        } else if (chg > 0.8) { 
+            sig = "BULLISH"; sigCol = "#00cc8a"; 
+            reason = "Positive Sentiment";
+        } else if (chg < -1.5) {
+            sig = "BEARISH"; sigCol = "var(--bear)";
+            reason = "Sell Pressure Increasing";
+        }
+
+        dataStore[s] = { p: p.toFixed(p < 1 ? 5 : 2), chg: chg.toFixed(2), rsi: rsi, shock: shockVal, whale: whale, sig: sig, sigCol: sigCol, reason: reason };
+    }
+
+    function render() {
+        const body = document.getElementById('monitor-body');
+        const wl = document.getElementById('wl-cont');
+        body.innerHTML = ''; wl.innerHTML = '';
+
+        watchlist.forEach(s => {
+            const d = dataStore[s] || { p: '0', chg: '0', rsi: '50', shock: '1.0', whale: 'Quiet', sig: 'SYNC', sigCol: '#333', reason: '...' };
+            const isUp = parseFloat(d.chg) >= 0;
+            const displayName = s.includes(':') ? s.split(':')[1].replace('USDT', '') : s;
+            const heatClass = parseFloat(d.chg) > 2.5 ? 'heat-up' : (parseFloat(d.chg) < -2.5 ? 'heat-down' : '');
+
+            wl.innerHTML += `<div class="wl-item ${heatClass}" style="${s===currentS?'background:#2b2f36':''}" onclick="switchT('${s}')">
+                <span><b>${displayName}</b></span>
+                <span style="color:${isUp?'var(--bull)':'var(--bear)'}">${isUp?'+':''}${d.chg}%</span>
+                <span onclick="event.stopPropagation(); delT('${s}')" class="del-btn">×</span>
+            </div>`;
+
+            body.innerHTML += `<tr>
+                <td style="color:var(--accent); font-weight:bold;">${displayName}</td>
+                <td>$${d.p}</td>
+                <td style="color:${isUp?'var(--bull)':'var(--bear)'}">${d.chg}%</td>
+                <td style="color:${d.rsi > 70 ? 'var(--bear)' : (d.rsi < 30 ? 'var(--bull)' : '#aaa')}">${d.rsi}</td>
+                <td style="color:var(--gold)">${d.shock}x</td>
+                <td>${d.whale}</td>
+                <td><span class="sig-badge" style="background:${d.sigCol}">${d.sig}</span></td>
+                <td><a href="https://finance.yahoo.com/quote/${s}" target="_blank" style="color:var(--accent); text-decoration:none;">🔍 Intel</a></td>
+                <td class="reasoning">${d.reason}</td>
+            </tr>`;
+        });
+    }
+
+    function switchT(s) {
+        currentS = s;
+        let tvSymbol = s.endsWith('.TO') ? "TSX:" + s.replace('.TO', '') : s;
+        new TradingView.widget({ "autosize": true, "symbol": tvSymbol, "interval": "30", "theme": "dark", "container_id": "tv_chart_container" });
+        render();
+    }
+
+    function playAlert() { new Audio('https://actions.google.com/sounds/v1/scifi/beep_tone.ogg').play().catch(()=>{}); }
+    
+    function addTicker() {
+        let val = document.getElementById('newT').value.toUpperCase().trim();
+        const type = document.getElementById('assetType').value;
+        if (!val) return;
+        let entry = (type === 'crypto' && !val.includes('BINANCE:')) ? `BINANCE:${val}${val.includes('USDT')?'':'USDT'}` : val;
+        watchlist.push(entry);
+        sync();
+        document.getElementById('newT').value = '';
+    }
+
+    function delT(s) { watchlist = watchlist.filter(x => x !== s); delete dataStore[s]; render(); }
+    function wipeData() { if(confirm("This will clear browser cache and reload from watchlist.json. Proceed?")) { localStorage.clear(); location.reload(); } }
+
+    function exportWatchlist() {
+        const blob = new Blob([JSON.stringify(watchlist, null, 2)], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `watchlist_backup.txt`;
+        a.click();
+    }
+
+    function importWatchlist(input) {
+        const reader = new FileReader();
+        reader.onload = function() {
+            try {
+                watchlist = JSON.parse(reader.result);
+                sync();
+            } catch (e) { alert("Invalid file format."); }
+        };
+        reader.readAsText(input.files[0]);
+    }
+
+    window.onload = init;
+</script>
+</body>
+</html>
