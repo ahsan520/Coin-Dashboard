@@ -427,6 +427,8 @@ canvas.sp{display:block;}
         <th onclick="sortBy('dipScore')" title="Funding Rate zone. Deeply negative = capitulation buy. Positive = euphoria sell.">FUNDING ZONE ↕</th>
         <th title="Open Interest vs price divergence. Confirms genuine moves or warns of fakes.">OI DIV</th>
         <th onclick="sortBy('dipScore')" title="Composite score combining EMA trend, funding extremes, OI divergence, CVD and RSI. Positive = buy dip. Negative = sell/avoid.">DIP SCORE ↕</th>
+        <th onclick="sortBy('bias4hScore')" title="4-hour timeframe bias: EMA8, recent candles, 4h CVD, volume and RSI combined">4H BIAS ↕</th>
+        <th onclick="sortBy('biasDayScore')" title="Daily timeframe bias: EMA200, 7-day price change, daily CVD, volume surge">DAILY BIAS ↕</th>
         <th onclick="sortBy('score')">SIGNAL ↕</th>
         <th>LINK</th>
         <th>REASONING</th>
@@ -715,17 +717,68 @@ async function fetchCVD(pair){
 }
 
 // ══════════════════════════════════════════════
-// MTF RSI
+// MTF RSI + KLINE DATA
 // ══════════════════════════════════════════════
 async function fetchMTF(pair){
   const tfs=['15m','1h','4h'];
-  return Promise.all(tfs.map(async tf=>{
+  const rsis=await Promise.all(tfs.map(async tf=>{
     try{
       const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${tf}&limit=30`,{signal:AbortSignal.timeout(5000)});
       const k=await r.json();
       return calcRSI(k.map(c=>parseFloat(c[4])),14);
     }catch{return null;}
   }));
+  return rsis;
+}
+async function fetch4hKlines(pair){
+  try{
+    const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair}&interval=4h&limit=20`,{signal:AbortSignal.timeout(5000)});
+    const k=await r.json();
+    if(!Array.isArray(k)||k.length<4) return null;
+    const closes=k.map(c=>parseFloat(c[4]));
+    const volumes=k.map(c=>parseFloat(c[5]));
+    const highs=k.map(c=>parseFloat(c[2]));
+    const lows=k.map(c=>parseFloat(c[3]));
+    // 4h trend: last 3 candles higher highs + higher lows = up
+    const n=closes.length;
+    const recentUp=closes[n-1]>closes[n-4];
+    const volUp=volumes[n-1]>((volumes[n-2]+volumes[n-3]+volumes[n-4])/3);
+    const rsi4h=calcRSI(closes,14);
+    // Simple 8-period EMA on 4h
+    const k2=2/(8+1);
+    let ema8=closes[0];
+    for(let i=1;i<closes.length;i++) ema8=closes[i]*k2+ema8*(1-k2);
+    const aboveEma8=closes[n-1]>ema8;
+    // CVD-like: last 4 candles bull/bear by close vs open
+    let cvd4h=0;
+    for(let i=n-4;i<n;i++){const o=parseFloat(k[i][1]);cvd4h+=closes[i]>o?1:-1;}
+    return{rsi4h,recentUp,volUp,aboveEma8,cvd4h,lastClose:closes[n-1],prevClose:closes[n-4]};
+  }catch{return null;}
+}
+async function fetchDailyKlines(pair){
+  try{
+    const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${pair}&interval=1d&limit=14`,{signal:AbortSignal.timeout(5000)});
+    const k=await r.json();
+    if(!Array.isArray(k)||k.length<7) return null;
+    const closes=k.map(c=>parseFloat(c[4]));
+    const volumes=k.map(c=>parseFloat(c[5]));
+    const n=closes.length;
+    const rsiDaily=calcRSI(closes,14);
+    // 7-day EMA
+    const k2=2/(7+1);
+    let ema7=closes[0];
+    for(let i=1;i<closes.length;i++) ema7=closes[i]*k2+ema7*(1-k2);
+    const aboveEma7=closes[n-1]>ema7;
+    // Volume trend: today vs 7-day avg
+    const avgVol=volumes.slice(0,n-1).reduce((a,b)=>a+b,0)/(n-1);
+    const volSurge=volumes[n-1]>avgVol*1.5;
+    // Price vs 7 days ago
+    const chg7d=((closes[n-1]-closes[n-7])/closes[n-7]*100).toFixed(1);
+    // CVD-like: last 7 candles
+    let cvdDaily=0;
+    for(let i=n-7;i<n;i++){const o=parseFloat(k[i][1]);cvdDaily+=closes[i]>o?1:-1;}
+    return{rsiDaily,aboveEma7,volSurge,chg7d:parseFloat(chg7d),cvdDaily};
+  }catch{return null;}
 }
 function calcRSI(closes,p=14){
   if(closes.length<p+1) return null;
@@ -773,12 +826,14 @@ async function sync(){
   const extra={};
   await Promise.all(cryptoS.map(async s=>{
     const pair=s.split(':')[1];
-    const[obi,cvd,mtf]=await Promise.all([
+    const[obi,cvd,mtf,k4h,kDay]=await Promise.all([
       fetchOBI(pair).catch(()=>null),
       fetchCVD(pair).catch(()=>null),
       fetchMTF(pair).catch(()=>[null,null,null]),
+      fetch4hKlines(pair).catch(()=>null),
+      fetchDailyKlines(pair).catch(()=>null),
     ]);
-    extra[s]={obi,cvd,mtf};
+    extra[s]={obi,cvd,mtf,k4h,kDay};
   }));
 
   for(const s of cryptoS){
@@ -837,33 +892,9 @@ function processAI(s,p,chg,ex){
   const r1h=mtf[1]??Math.min(95,Math.max(5,Math.round(50+chg*2+(Math.random()-.5)*8)));
   const r4h=mtf[2]??Math.min(95,Math.max(5,Math.round(50+chg*1.5+(Math.random()-.5)*6)));
 
-  // Composite score
-  let score=0;
-  if(chg>1.5) score+=2; else if(chg>.5) score+=1; else if(chg<-1.5) score-=2; else if(chg<-.5) score-=1;
-  if(parseFloat(shock)>1.6) score+=1;
-  score+=obiScore; score+=cvdScore;
-  if(nf>20) score+=1; else if(nf<-20) score-=1;
-  if(r15<30&&r1h<35) score+=1;
-  if(r15>70&&r1h>65) score-=1;
-
-  let sig,sigC,reason,whale='Quiet';
-  if(score>=4){
-    sig='STRONG BUY';sigC='s-sb';reason='OBI+CVD+Vol breakout aligned — high conviction';whale='🐋 ACCUM';
-    playAlert();logAlert('buy',`STRONG BUY: ${s.replace('BINANCE:','').replace('USDT','')} — all signals aligned`);
-  }else if(score>=2){
-    sig='BULLISH';sigC='s-b';reason='Positive price action with flow support';
-  }else if(score<=-4){
-    sig='STRONG SELL';sigC='s-ss';reason='OBI+CVD distribution — heavy sell pressure';whale='🐻 DIST';
-    logAlert('sell',`STRONG SELL: ${s.replace('BINANCE:','').replace('USDT','')} — distribution`);
-  }else if(score<=-2){
-    sig='BEARISH';sigC='s-be';reason='Declining price with negative flow divergence';
-  }else{
-    sig='WAIT';sigC='s-w';reason='No clear edge — conflicting signals';
-  }
-
   const liq=isCrypto?liqEstimate(p,fr,lp):null;
 
-  // ── EMA TREND (200-period on stored price history) ──
+  // ── EMA TREND (200-period EMA on stored price history) ──
   const ph=PH[s]||[];
   let emaTrend='—',emaVal=null;
   if(ph.length>=10){
@@ -879,47 +910,36 @@ function processAI(s,p,chg,ex){
   const frNum=parseFloat(fr)||0;
   let fundingFlag='—',fundingFlagC='var(--text-dim)';
   if(isCrypto&&fr!=='N/A'){
-    if(frNum<=-0.03){fundingFlag='⚡ DIP ZONE';fundingFlagC='var(--bull)';}         // deeply negative = longs got wiped, potential bottom
+    if(frNum<=-0.03){fundingFlag='⚡ DIP ZONE';fundingFlagC='var(--bull)';}
     else if(frNum<=-0.01){fundingFlag='↓ LOW FR';fundingFlagC='#00cc8a';}
-    else if(frNum>=0.05){fundingFlag='🔥 BLOW-OFF';fundingFlagC='var(--bear)';}     // extremely positive = euphoria, potential top
+    else if(frNum>=0.05){fundingFlag='🔥 BLOW-OFF';fundingFlagC='var(--bear)';}
     else if(frNum>=0.025){fundingFlag='↑ HIGH FR';fundingFlagC='#ff8c00';}
     else{fundingFlag='NEUTRAL';fundingFlagC='var(--text-dim)';}
   }
 
-  // ── OI DIVERGENCE (estimated from L/S ratio vs price momentum) ──
+  // ── OI DIVERGENCE ──
   let oiDiv='—',oiDivC='var(--text-dim)';
   if(isCrypto){
     const priceUp=parseFloat(chg)>0;
     const longHeavy=lp>60;
-    if(priceUp&&!longHeavy){oiDiv='⚠ OI DROP';oiDivC='var(--bear)';}       // price up but OI falling = short cover, weak rally
-    else if(!priceUp&&longHeavy){oiDiv='💎 DIP BUY';oiDivC='var(--bull)';} // price down but longs holding = real demand below
-    else if(priceUp&&longHeavy){oiDiv='✓ CONFIRM';oiDivC='var(--bull)';}   // price up + longs growing = genuine move
+    if(priceUp&&!longHeavy){oiDiv='⚠ OI DROP';oiDivC='var(--bear)';}
+    else if(!priceUp&&longHeavy){oiDiv='💎 DIP BUY';oiDivC='var(--bull)';}
+    else if(priceUp&&longHeavy){oiDiv='✓ CONFIRM';oiDivC='var(--bull)';}
     else{oiDiv='↓ BEAR OI';oiDivC='var(--bear)';}
   }
 
-  // ── DIP/CRUSH COMPOSITE SCORE ──
-  // Positive = buy the dip opportunity. Negative = sell / avoid.
+  // ── DIP SCORE (buy-the-dip / sell-before-crush composite) ──
   let dipScore=0;
-  // EMA trend — only buy dips in uptrends
   if(emaTrend==='ABOVE') dipScore+=1; else if(emaTrend==='BELOW') dipScore-=1;
-  // Funding extremes
-  if(frNum<=-0.03) dipScore+=2;       // capitulation funding = strong dip signal
-  else if(frNum<=-0.01) dipScore+=1;
-  else if(frNum>=0.05) dipScore-=2;   // euphoria funding = sell signal
-  else if(frNum>=0.025) dipScore-=1;
-  // OI divergence
+  if(frNum<=-0.03) dipScore+=2; else if(frNum<=-0.01) dipScore+=1;
+  else if(frNum>=0.05) dipScore-=2; else if(frNum>=0.025) dipScore-=1;
   if(oiDiv==='💎 DIP BUY') dipScore+=2;
   else if(oiDiv==='✓ CONFIRM') dipScore+=1;
   else if(oiDiv==='⚠ OI DROP') dipScore-=1;
   else if(oiDiv==='↓ BEAR OI') dipScore-=1;
-  // CVD
   if(cvdScore>0) dipScore+=1; else if(cvdScore<0) dipScore-=1;
-  // RSI oversold on dip = buy, overbought = sell
-  if(r15<30&&r1h<40) dipScore+=2;
-  else if(r15>70&&r1h>65) dipScore-=2;
-  // Price actually dipping (buying opportunity)
-  if(parseFloat(chg)<-2&&dipScore>0) dipScore+=1;  // price down + other signals good = real dip buy
-  // OBI
+  if(r15<30&&r1h<40) dipScore+=2; else if(r15>70&&r1h>65) dipScore-=2;
+  if(parseFloat(chg)<-2&&dipScore>0) dipScore+=1;
   if(obiScore>0) dipScore+=1; else if(obiScore<0) dipScore-=1;
 
   let dipLabel,dipLabelC;
@@ -930,11 +950,133 @@ function processAI(s,p,chg,ex){
   else if(dipScore<=-2){dipLabel='↘ REDUCE';dipLabelC='#ff8c00';}
   else{dipLabel='— HOLD';dipLabelC='var(--text-dim)';}
 
+  // ── UNIFIED SIGNAL SCORE (all columns feed in) ──
+  let score=0;
+  // Price momentum
+  if(chg>1.5) score+=2; else if(chg>.5) score+=1; else if(chg<-1.5) score-=2; else if(chg<-.5) score-=1;
+  // Volume shock
+  if(parseFloat(shock)>1.6) score+=1;
+  // OBI + CVD
+  score+=obiScore; score+=cvdScore;
+  // Net flow
+  if(nf>20) score+=1; else if(nf<-20) score-=1;
+  // MTF RSI
+  if(r15<30&&r1h<35) score+=1; if(r15>70&&r1h>65) score-=1;
+  // EMA trend — gating: bearish trend cuts bull signals, bullish trend amplifies
+  if(emaTrend==='ABOVE') score+=1; else if(emaTrend==='BELOW') score-=1;
+  // Funding extremes
+  if(frNum<=-0.03) score+=2; else if(frNum<=-0.01) score+=1;
+  else if(frNum>=0.05) score-=2; else if(frNum>=0.025) score-=1;
+  // OI divergence
+  if(oiDiv==='💎 DIP BUY') score+=2; else if(oiDiv==='✓ CONFIRM') score+=1;
+  else if(oiDiv==='⚠ OI DROP') score-=1; else if(oiDiv==='↓ BEAR OI') score-=1;
+
+  // ── BUILD REASON STRING from all contributing factors ──
+  const reasonParts=[];
+  if(emaTrend==='ABOVE') reasonParts.push('price above EMA'); else if(emaTrend==='BELOW') reasonParts.push('below EMA — downtrend');
+  if(oiDiv==='💎 DIP BUY') reasonParts.push('longs holding on dip');
+  else if(oiDiv==='✓ CONFIRM') reasonParts.push('OI confirms move');
+  else if(oiDiv==='⚠ OI DROP') reasonParts.push('weak rally — OI falling');
+  else if(oiDiv==='↓ BEAR OI') reasonParts.push('OI bearish');
+  if(fundingFlag==='⚡ DIP ZONE') reasonParts.push('funding capitulation');
+  else if(fundingFlag==='🔥 BLOW-OFF') reasonParts.push('funding euphoria — top risk');
+  else if(fundingFlag==='↑ HIGH FR') reasonParts.push('funding elevated');
+  if(cvdScore>0) reasonParts.push('CVD bullish'); else if(cvdScore<0) reasonParts.push('CVD bearish');
+  if(obiScore>0) reasonParts.push('OBI bid-heavy'); else if(obiScore<0) reasonParts.push('OBI ask-heavy');
+  if(r15<30&&r1h<35) reasonParts.push('RSI oversold'); else if(r15>70&&r1h>65) reasonParts.push('RSI overbought');
+  if(nf>20) reasonParts.push('strong inflow'); else if(nf<-20) reasonParts.push('outflow pressure');
+
+  let sig,sigC,whale='Quiet';
+  const reason=reasonParts.length?reasonParts.join(' · '):'Awaiting more data';
+
+  if(score>=6){
+    sig='STRONG BUY';sigC='s-sb';whale='🐋 ACCUM';
+    playAlert();logAlert('buy',`STRONG BUY: ${s.replace('BINANCE:','').replace('USDT','')} — ${reason}`);
+  }else if(score>=3){
+    sig='BULLISH';sigC='s-b';
+  }else if(score<=-6){
+    sig='STRONG SELL';sigC='s-ss';whale='🐻 DIST';
+    logAlert('sell',`STRONG SELL: ${s.replace('BINANCE:','').replace('USDT','')} — ${reason}`);
+  }else if(score<=-3){
+    sig='BEARISH';sigC='s-be';
+  }else{
+    sig='WAIT';sigC='s-w';
+  }
+
+  // ── 4H BIAS ──
+  const k4h=ex.k4h||null;
+  let bias4h='—',bias4hC='var(--text-dim)',bias4hScore=0;
+  if(isCrypto&&k4h){
+    if(k4h.aboveEma8) bias4hScore+=2; else bias4hScore-=2;
+    if(k4h.recentUp) bias4hScore+=1; else bias4hScore-=1;
+    if(k4h.volUp&&k4h.recentUp) bias4hScore+=1;   // volume confirms up move
+    if(k4h.volUp&&!k4h.recentUp) bias4hScore-=1;  // volume confirms down move
+    if(k4h.cvd4h>=2) bias4hScore+=2;
+    else if(k4h.cvd4h>=1) bias4hScore+=1;
+    else if(k4h.cvd4h<=-2) bias4hScore-=2;
+    else if(k4h.cvd4h<=-1) bias4hScore-=1;
+    if(k4h.rsi4h!==null){
+      if(k4h.rsi4h<35) bias4hScore+=1;  // oversold = potential bounce
+      else if(k4h.rsi4h>65) bias4hScore-=1; // overbought = potential pull
+    }
+    if(bias4hScore>=4){bias4h='🟢 BULL 4H';bias4hC='var(--bull)';}
+    else if(bias4hScore>=2){bias4h='↗ LEAN BULL';bias4hC='#00cc8a';}
+    else if(bias4hScore<=-4){bias4h='🔴 BEAR 4H';bias4hC='var(--bear)';}
+    else if(bias4hScore<=-2){bias4h='↘ LEAN BEAR';bias4hC='#ff8c00';}
+    else{bias4h='◎ NEUTRAL';bias4hC='var(--text-dim)';}
+  } else if(isCrypto){
+    // fallback from existing r4h RSI + EMA
+    if(r4h>55&&emaTrend==='ABOVE'){bias4h='↗ LEAN BULL';bias4hC='#00cc8a';}
+    else if(r4h<45&&emaTrend==='BELOW'){bias4h='↘ LEAN BEAR';bias4hC='#ff8c00';}
+    else{bias4h='◎ NEUTRAL';bias4hC='var(--text-dim)';}
+  }
+
+  // ── DAILY BIAS ──
+  const kDay=ex.kDay||null;
+  let biasDay='—',biasDayC='var(--text-dim)',biasDayScore=0;
+  if(isCrypto&&kDay){
+    if(kDay.aboveEma7) biasDayScore+=2; else biasDayScore-=2;
+    if(kDay.chg7d>5) biasDayScore+=2; else if(kDay.chg7d>1) biasDayScore+=1;
+    else if(kDay.chg7d<-5) biasDayScore-=2; else if(kDay.chg7d<-1) biasDayScore-=1;
+    if(kDay.volSurge&&kDay.chg7d>0) biasDayScore+=1; // vol surge on up days = conviction
+    if(kDay.volSurge&&kDay.chg7d<0) biasDayScore-=1; // vol surge on down days = selling pressure
+    if(kDay.cvdDaily>=4) biasDayScore+=2;
+    else if(kDay.cvdDaily>=2) biasDayScore+=1;
+    else if(kDay.cvdDaily<=-4) biasDayScore-=2;
+    else if(kDay.cvdDaily<=-2) biasDayScore-=1;
+    if(kDay.rsiDaily!==null){
+      if(kDay.rsiDaily<35) biasDayScore+=1;
+      else if(kDay.rsiDaily>65) biasDayScore-=1;
+    }
+    // EMA200 from PH as additional daily gate
+    if(emaTrend==='ABOVE') biasDayScore+=1; else if(emaTrend==='BELOW') biasDayScore-=1;
+    if(biasDayScore>=5){biasDay='🟢 BULL DAY';biasDayC='var(--bull)';}
+    else if(biasDayScore>=2){biasDay='↗ LEAN BULL';biasDayC='#00cc8a';}
+    else if(biasDayScore<=-5){biasDay='🔴 BEAR DAY';biasDayC='var(--bear)';}
+    else if(biasDayScore<=-2){biasDay='↘ LEAN BEAR';biasDayC='#ff8c00';}
+    else{biasDay='◎ NEUTRAL';biasDayC='var(--text-dim)';}
+  } else if(isCrypto){
+    // fallback from EMA + chg
+    const c=parseFloat(chg);
+    if(emaTrend==='ABOVE'&&c>0){biasDay='↗ LEAN BULL';biasDayC='#00cc8a';}
+    else if(emaTrend==='BELOW'&&c<0){biasDay='↘ LEAN BEAR';biasDayC='#ff8c00';}
+    else{biasDay='◎ NEUTRAL';biasDayC='var(--text-dim)';}
+  }
+
+  // Feed 4H + Daily bias into unified score
+  score+=Math.round(bias4hScore*0.4); // 4h contributes 40% weight
+  score+=Math.round(biasDayScore*0.3); // daily contributes 30% weight
+
+  // Update reason with timeframe bias
+  if(bias4h!=='—'&&bias4h!=='◎ NEUTRAL') reasonParts.push(`4H: ${bias4h.replace(/[🟢🔴]/g,'').trim()}`);
+  if(biasDay!=='—'&&biasDay!=='◎ NEUTRAL') reasonParts.push(`Day: ${biasDay.replace(/[🟢🔴]/g,'').trim()}`);
+
   DS[s]={
     p:p.toFixed(p<1?5:p<10?3:2),chg:chg.toFixed(2),
     r15,r1h,r4h,shock,nf,lp,sp,fr,whale,sig,sigC,reason,score,
     obi,cvd:cvd?{value:cvd.value,trending:cvd.trending,series:cvd.series}:null,liq,
-    emaTrend,emaVal,fundingFlag,fundingFlagC,oiDiv,oiDivC,dipScore,dipLabel,dipLabelC
+    emaTrend,emaVal,fundingFlag,fundingFlagC,oiDiv,oiDivC,dipScore,dipLabel,dipLabelC,
+    bias4h,bias4hC,bias4hScore,biasDay,biasDayC,biasDayScore
   };
 }
 
@@ -974,7 +1116,7 @@ function renderTable(){
     });
   }
   document.getElementById('mx-body').innerHTML=sorted.map(s=>{
-    const d=DS[s]||{p:'—',chg:'0',r15:50,r1h:50,r4h:50,shock:'1.0',nf:0,lp:50,sp:50,fr:'N/A',whale:'—',sig:'SYNC',sigC:'s-w',reason:'...',obi:null,cvd:null,liq:null,emaTrend:'—',fundingFlag:'—',fundingFlagC:'var(--text-dim)',oiDiv:'—',oiDivC:'var(--text-dim)',dipScore:0,dipLabel:'—',dipLabelC:'var(--text-dim)'};
+    const d=DS[s]||{p:'—',chg:'0',r15:50,r1h:50,r4h:50,shock:'1.0',nf:0,lp:50,sp:50,fr:'N/A',whale:'—',sig:'SYNC',sigC:'s-w',reason:'...',obi:null,cvd:null,liq:null,emaTrend:'—',fundingFlag:'—',fundingFlagC:'var(--text-dim)',oiDiv:'—',oiDivC:'var(--text-dim)',dipScore:0,dipLabel:'—',dipLabelC:'var(--text-dim)',bias4h:'—',bias4hC:'var(--text-dim)',bias4hScore:0,biasDay:'—',biasDayC:'var(--text-dim)',biasDayScore:0};
     const up=parseFloat(d.chg)>=0;
     const name=s.includes(':')?s.split(':')[1].replace('USDT',''):s;
     const hc=parseFloat(d.chg)>2.5?'ru':parseFloat(d.chg)<-2.5?'rd':'';
@@ -1032,6 +1174,8 @@ function renderTable(){
       <td style="font-size:9px;font-weight:700;color:${d.fundingFlagC||'var(--text-dim)'};">${d.fundingFlag||'—'}</td>
       <td style="font-size:9px;font-weight:700;color:${d.oiDivC||'var(--text-dim)'};">${d.oiDiv||'—'}</td>
       <td style="font-size:10px;font-weight:700;color:${d.dipLabelC||'var(--text-dim)'};" title="Raw score: ${d.dipScore||0}">${d.dipLabel||'—'}</td>
+      <td style="font-size:10px;font-weight:700;color:${d.bias4hC||'var(--text-dim)'};" title="4H score: ${d.bias4hScore||0}">${d.bias4h||'—'}</td>
+      <td style="font-size:10px;font-weight:700;color:${d.biasDayC||'var(--text-dim)'};" title="Daily score: ${d.biasDayScore||0}">${d.biasDay||'—'}</td>
       <td><span class="sig ${d.sigC}"><span class="sig-dot" style="background:${sdotC}"></span>${d.sig}</span></td>
       <td><a href="https://finance.yahoo.com/quote/${s.replace('BINANCE:','').replace('USDT','')}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:9px;">⬡ Intel</a></td>
       <td style="color:var(--text-dim);font-style:italic;font-size:9px;max-width:190px;white-space:normal;line-height:1.4;">${d.reason}</td>
