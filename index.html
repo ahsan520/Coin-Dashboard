@@ -423,6 +423,10 @@ canvas.sp{display:block;}
         <th onclick="sortBy('fr')">FUNDING ↕</th>
         <th onclick="sortBy('liqdist')">LIQ CLUSTER ↕</th>
         <th onclick="sortBy('whale')">WHALE ↕</th>
+        <th onclick="sortBy('emaTrend')" title="Price vs 200-period EMA. Only buy dips when ABOVE.">EMA TREND ↕</th>
+        <th onclick="sortBy('dipScore')" title="Funding Rate zone. Deeply negative = capitulation buy. Positive = euphoria sell.">FUNDING ZONE ↕</th>
+        <th title="Open Interest vs price divergence. Confirms genuine moves or warns of fakes.">OI DIV</th>
+        <th onclick="sortBy('dipScore')" title="Composite score combining EMA trend, funding extremes, OI divergence, CVD and RSI. Positive = buy dip. Negative = sell/avoid.">DIP SCORE ↕</th>
         <th onclick="sortBy('score')">SIGNAL ↕</th>
         <th>LINK</th>
         <th>REASONING</th>
@@ -858,10 +862,79 @@ function processAI(s,p,chg,ex){
   }
 
   const liq=isCrypto?liqEstimate(p,fr,lp):null;
+
+  // ── EMA TREND (200-period on stored price history) ──
+  const ph=PH[s]||[];
+  let emaTrend='—',emaVal=null;
+  if(ph.length>=10){
+    const period=Math.min(200,ph.length);
+    const k=2/(period+1);
+    let ema=ph[ph.length-period];
+    for(let i=ph.length-period+1;i<ph.length;i++) ema=ph[i]*k+ema*(1-k);
+    emaVal=ema;
+    emaTrend=p>ema?'ABOVE':'BELOW';
+  }
+
+  // ── FUNDING EXTREME ──
+  const frNum=parseFloat(fr)||0;
+  let fundingFlag='—',fundingFlagC='var(--text-dim)';
+  if(isCrypto&&fr!=='N/A'){
+    if(frNum<=-0.03){fundingFlag='⚡ DIP ZONE';fundingFlagC='var(--bull)';}         // deeply negative = longs got wiped, potential bottom
+    else if(frNum<=-0.01){fundingFlag='↓ LOW FR';fundingFlagC='#00cc8a';}
+    else if(frNum>=0.05){fundingFlag='🔥 BLOW-OFF';fundingFlagC='var(--bear)';}     // extremely positive = euphoria, potential top
+    else if(frNum>=0.025){fundingFlag='↑ HIGH FR';fundingFlagC='#ff8c00';}
+    else{fundingFlag='NEUTRAL';fundingFlagC='var(--text-dim)';}
+  }
+
+  // ── OI DIVERGENCE (estimated from L/S ratio vs price momentum) ──
+  let oiDiv='—',oiDivC='var(--text-dim)';
+  if(isCrypto){
+    const priceUp=parseFloat(chg)>0;
+    const longHeavy=lp>60;
+    if(priceUp&&!longHeavy){oiDiv='⚠ OI DROP';oiDivC='var(--bear)';}       // price up but OI falling = short cover, weak rally
+    else if(!priceUp&&longHeavy){oiDiv='💎 DIP BUY';oiDivC='var(--bull)';} // price down but longs holding = real demand below
+    else if(priceUp&&longHeavy){oiDiv='✓ CONFIRM';oiDivC='var(--bull)';}   // price up + longs growing = genuine move
+    else{oiDiv='↓ BEAR OI';oiDivC='var(--bear)';}
+  }
+
+  // ── DIP/CRUSH COMPOSITE SCORE ──
+  // Positive = buy the dip opportunity. Negative = sell / avoid.
+  let dipScore=0;
+  // EMA trend — only buy dips in uptrends
+  if(emaTrend==='ABOVE') dipScore+=1; else if(emaTrend==='BELOW') dipScore-=1;
+  // Funding extremes
+  if(frNum<=-0.03) dipScore+=2;       // capitulation funding = strong dip signal
+  else if(frNum<=-0.01) dipScore+=1;
+  else if(frNum>=0.05) dipScore-=2;   // euphoria funding = sell signal
+  else if(frNum>=0.025) dipScore-=1;
+  // OI divergence
+  if(oiDiv==='💎 DIP BUY') dipScore+=2;
+  else if(oiDiv==='✓ CONFIRM') dipScore+=1;
+  else if(oiDiv==='⚠ OI DROP') dipScore-=1;
+  else if(oiDiv==='↓ BEAR OI') dipScore-=1;
+  // CVD
+  if(cvdScore>0) dipScore+=1; else if(cvdScore<0) dipScore-=1;
+  // RSI oversold on dip = buy, overbought = sell
+  if(r15<30&&r1h<40) dipScore+=2;
+  else if(r15>70&&r1h>65) dipScore-=2;
+  // Price actually dipping (buying opportunity)
+  if(parseFloat(chg)<-2&&dipScore>0) dipScore+=1;  // price down + other signals good = real dip buy
+  // OBI
+  if(obiScore>0) dipScore+=1; else if(obiScore<0) dipScore-=1;
+
+  let dipLabel,dipLabelC;
+  if(dipScore>=5){dipLabel='🟢 BUY DIP';dipLabelC='var(--bull)';}
+  else if(dipScore>=3){dipLabel='↗ ACCUMULATE';dipLabelC='#00cc8a';}
+  else if(dipScore>=1){dipLabel='◎ WATCH';dipLabelC='var(--accent)';}
+  else if(dipScore<=-4){dipLabel='🔴 EXIT NOW';dipLabelC='var(--bear)';}
+  else if(dipScore<=-2){dipLabel='↘ REDUCE';dipLabelC='#ff8c00';}
+  else{dipLabel='— HOLD';dipLabelC='var(--text-dim)';}
+
   DS[s]={
     p:p.toFixed(p<1?5:p<10?3:2),chg:chg.toFixed(2),
     r15,r1h,r4h,shock,nf,lp,sp,fr,whale,sig,sigC,reason,score,
-    obi,cvd:cvd?{value:cvd.value,trending:cvd.trending,series:cvd.series}:null,liq
+    obi,cvd:cvd?{value:cvd.value,trending:cvd.trending,series:cvd.series}:null,liq,
+    emaTrend,emaVal,fundingFlag,fundingFlagC,oiDiv,oiDivC,dipScore,dipLabel,dipLabelC
   };
 }
 
@@ -901,7 +974,7 @@ function renderTable(){
     });
   }
   document.getElementById('mx-body').innerHTML=sorted.map(s=>{
-    const d=DS[s]||{p:'—',chg:'0',r15:50,r1h:50,r4h:50,shock:'1.0',nf:0,lp:50,sp:50,fr:'N/A',whale:'—',sig:'SYNC',sigC:'s-w',reason:'...',obi:null,cvd:null,liq:null};
+    const d=DS[s]||{p:'—',chg:'0',r15:50,r1h:50,r4h:50,shock:'1.0',nf:0,lp:50,sp:50,fr:'N/A',whale:'—',sig:'SYNC',sigC:'s-w',reason:'...',obi:null,cvd:null,liq:null,emaTrend:'—',fundingFlag:'—',fundingFlagC:'var(--text-dim)',oiDiv:'—',oiDivC:'var(--text-dim)',dipScore:0,dipLabel:'—',dipLabelC:'var(--text-dim)'};
     const up=parseFloat(d.chg)>=0;
     const name=s.includes(':')?s.split(':')[1].replace('USDT',''):s;
     const hc=parseFloat(d.chg)>2.5?'ru':parseFloat(d.chg)<-2.5?'rd':'';
@@ -955,6 +1028,10 @@ function renderTable(){
       <td style="color:${frC};font-size:9px;">${frStr}</td>
       <td>${liqH}</td>
       <td style="font-size:9px;">${d.whale}</td>
+      <td style="font-size:9px;font-weight:700;color:${d.emaTrend==='ABOVE'?'var(--bull)':d.emaTrend==='BELOW'?'var(--bear)':'var(--text-dim)'};">${d.emaTrend||'—'}</td>
+      <td style="font-size:9px;font-weight:700;color:${d.fundingFlagC||'var(--text-dim)'};">${d.fundingFlag||'—'}</td>
+      <td style="font-size:9px;font-weight:700;color:${d.oiDivC||'var(--text-dim)'};">${d.oiDiv||'—'}</td>
+      <td style="font-size:10px;font-weight:700;color:${d.dipLabelC||'var(--text-dim)'};" title="Raw score: ${d.dipScore||0}">${d.dipLabel||'—'}</td>
       <td><span class="sig ${d.sigC}"><span class="sig-dot" style="background:${sdotC}"></span>${d.sig}</span></td>
       <td><a href="https://finance.yahoo.com/quote/${s.replace('BINANCE:','').replace('USDT','')}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:9px;">⬡ Intel</a></td>
       <td style="color:var(--text-dim);font-style:italic;font-size:9px;max-width:190px;white-space:normal;line-height:1.4;">${d.reason}</td>
