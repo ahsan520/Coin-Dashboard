@@ -85,10 +85,10 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 /* chart */
 .chart-wrap{grid-column:2;grid-row:1;overflow:hidden;}
 
-/* table — now lives below the news, full width */
-.tbl-wrap{display:flex;flex-direction:column;overflow:hidden;border-top:1px solid var(--border);}
+/* table — standalone full-width section at very bottom of page */
+.tbl-wrap{display:flex;flex-direction:column;border-top:2px solid var(--border2);}
 .tbl-ph{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--card);flex-shrink:0;gap:8px;}
-.tbl-scroll{overflow:auto;max-height:520px;}
+.tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 table.mx{width:100%;min-width:1550px;border-collapse:collapse;}
 table.mx thead th{font-family:var(--mono);font-size:8px;color:var(--text-dim);letter-spacing:1.2px;padding:8px 9px;border-bottom:1px solid var(--border);background:var(--card);position:sticky;top:0;z-index:5;white-space:nowrap;cursor:pointer;user-select:none;}
 table.mx thead th:hover{color:var(--accent);}
@@ -208,9 +208,9 @@ canvas.sp{display:block;}
 .pc-vn{font-weight:700;margin-top:2px;}
 
 /* ── CORRELATION TAB ── */
-#tab-corr{height:calc(100vh - 80px);overflow:hidden;display:flex;flex-direction:column;}
+#tab-corr{overflow:auto;display:flex;flex-direction:column;}
 .corr-ph{padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:14px;background:var(--card);}
-.corr-scroll{overflow:auto;flex:1;padding:16px;}
+.corr-scroll{overflow:auto;padding:16px;}
 .ctbl{border-collapse:collapse;}
 .ctbl th,.ctbl td{font-family:var(--mono);font-size:9px;padding:6px 8px;border:1px solid var(--border);text-align:center;min-width:65px;}
 .ctbl th{background:var(--card);color:var(--text-dim);position:sticky;top:0;z-index:3;}
@@ -222,8 +222,6 @@ canvas.sp{display:block;}
   .grid2{grid-template-columns:1fr;height:auto;}
   .wl-wrap{grid-column:1;grid-row:2;border-right:none;border-bottom:1px solid var(--border);max-height:280px;}
   .chart-wrap{grid-column:1;grid-row:1;height:260px;}
-  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-height:none;}
-  table.mx{min-width:820px;}
   .hdr-right .hstat:nth-child(n+3){display:none;}
   .bnews-body{grid-template-columns:1fr;max-height:260px;}
   .j-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr;}
@@ -314,43 +312,6 @@ canvas.sp{display:block;}
     </div>
     <div class="bnews-body" id="bnews-body"></div>
   </div>
-
-  <!-- TABLE PANEL — full width at bottom -->
-  <div class="tbl-wrap">
-    <div class="tbl-ph">
-      <span class="pt">◆ PREDATOR APEX — Signal Matrix v49</span>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button class="bsm" onclick="toggleAlerts()" style="padding:3px 10px;">🔔 ALERTS</button>
-        <span style="font-family:var(--mono);font-size:8px;color:var(--text-dim);" id="last-upd">—</span>
-      </div>
-    </div>
-    <!-- Alert strip -->
-    <div id="alert-strip" class="alert-strip" style="display:none;"></div>
-    <!-- Table -->
-    <div class="tbl-scroll">
-      <table class="mx">
-        <thead><tr>
-          <th onclick="sortBy('name')">TICKER ↕</th>
-          <th onclick="sortBy('p')">PRICE ↕</th>
-          <th onclick="sortBy('chg')">24H % ↕</th>
-          <th>SPARK</th>
-          <th onclick="sortBy('r1h')">MTF RSI</th>
-          <th onclick="sortBy('obi')">OB IMBAL ↕</th>
-          <th onclick="sortBy('cvdv')">CVD ↕</th>
-          <th onclick="sortBy('shock')">VOL ↕</th>
-          <th onclick="sortBy('nf')">FLOW ↕</th>
-          <th onclick="sortBy('lp')">L/S ↕</th>
-          <th onclick="sortBy('fr')">FUNDING ↕</th>
-          <th onclick="sortBy('liqdist')">LIQ CLUSTER ↕</th>
-          <th onclick="sortBy('whale')">WHALE ↕</th>
-          <th onclick="sortBy('score')">SIGNAL ↕</th>
-          <th>LINK</th>
-          <th>REASONING</th>
-        </tr></thead>
-        <tbody id="mx-body"></tbody>
-      </table>
-    </div>
-  </div>
 </div>
 
 <!-- ══ JOURNAL TAB ══ -->
@@ -431,6 +392,43 @@ canvas.sp{display:block;}
     <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim);padding:20px;">
       Need ≥2 assets with ≥5 price samples. Wait a few sync cycles…
     </div>
+  </div>
+</div>
+
+<!-- ══ SIGNAL MATRIX TABLE — always visible below all tabs ══ -->
+<div class="tbl-wrap">
+  <div class="tbl-ph">
+    <span class="pt">◆ PREDATOR APEX — Signal Matrix v49</span>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button class="bsm" onclick="toggleAlerts()" style="padding:3px 10px;">🔔 ALERTS</button>
+      <span style="font-family:var(--mono);font-size:8px;color:var(--text-dim);" id="last-upd">—</span>
+    </div>
+  </div>
+  <!-- Alert strip -->
+  <div id="alert-strip" class="alert-strip" style="display:none;"></div>
+  <!-- Table -->
+  <div class="tbl-scroll">
+    <table class="mx">
+      <thead><tr>
+        <th onclick="sortBy('name')">TICKER ↕</th>
+        <th onclick="sortBy('p')">PRICE ↕</th>
+        <th onclick="sortBy('chg')">24H % ↕</th>
+        <th>SPARK</th>
+        <th onclick="sortBy('r1h')">MTF RSI</th>
+        <th onclick="sortBy('obi')">OB IMBAL ↕</th>
+        <th onclick="sortBy('cvdv')">CVD ↕</th>
+        <th onclick="sortBy('shock')">VOL ↕</th>
+        <th onclick="sortBy('nf')">FLOW ↕</th>
+        <th onclick="sortBy('lp')">L/S ↕</th>
+        <th onclick="sortBy('fr')">FUNDING ↕</th>
+        <th onclick="sortBy('liqdist')">LIQ CLUSTER ↕</th>
+        <th onclick="sortBy('whale')">WHALE ↕</th>
+        <th onclick="sortBy('score')">SIGNAL ↕</th>
+        <th>LINK</th>
+        <th>REASONING</th>
+      </tr></thead>
+      <tbody id="mx-body"></tbody>
+    </table>
   </div>
 </div>
 
